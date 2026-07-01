@@ -101,43 +101,43 @@ func (b *Bot) onMessage(ctx context.Context, evt *event.Event) {
 	if !strings.HasPrefix(body, "!olx") {
 		return
 	}
-	b.handleCommand(ctx, evt.Sender, body)
+	b.handleCommand(ctx, evt.Sender, evt.ID, body)
 }
 
-func (b *Bot) handleCommand(ctx context.Context, sender id.UserID, body string) {
+func (b *Bot) handleCommand(ctx context.Context, sender id.UserID, replyTo id.EventID, body string) {
 	args, err := tokenize(body)
 	if err != nil {
-		b.reply(ctx, "❌ "+err.Error())
+		b.reply(ctx, replyTo, "❌ "+err.Error())
 		return
 	}
 	// args[0] == "!olx"
 	if len(args) < 2 {
-		b.replyCode(ctx, helpText())
+		b.replyCode(ctx, replyTo, helpText())
 		return
 	}
 
 	switch strings.ToLower(args[1]) {
 	case "add":
-		b.cmdAdd(ctx, sender, args[2:])
+		b.cmdAdd(ctx, sender, replyTo, args[2:])
 	case "list", "ls":
-		b.cmdList(ctx, sender)
+		b.cmdList(ctx, sender, replyTo)
 	case "delete", "remove", "rm", "del":
-		b.cmdDelete(ctx, sender, args[2:])
+		b.cmdDelete(ctx, sender, replyTo, args[2:])
 	case "disable":
-		b.cmdSetEnabled(ctx, sender, args[2:], false)
+		b.cmdSetEnabled(ctx, sender, replyTo, args[2:], false)
 	case "enable":
-		b.cmdSetEnabled(ctx, sender, args[2:], true)
+		b.cmdSetEnabled(ctx, sender, replyTo, args[2:], true)
 	case "help":
-		b.replyCode(ctx, helpText())
+		b.replyCode(ctx, replyTo, helpText())
 	default:
-		b.replyCode(ctx, helpText())
+		b.replyCode(ctx, replyTo, helpText())
 	}
 }
 
-func (b *Bot) cmdAdd(ctx context.Context, sender id.UserID, args []string) {
+func (b *Bot) cmdAdd(ctx context.Context, sender id.UserID, replyTo id.EventID, args []string) {
 	// add "<query>" <min> <max> <category_id>  (min/max/category optional: - or omitted)
 	if len(args) < 1 {
-		b.reply(ctx, "Usage: !olx add \"<query>\" <min> <max> <category_id>")
+		b.reply(ctx, replyTo, "Usage: !olx add \"<query>\" <min> <max> <category_id>")
 		return
 	}
 	sp := olx.SearchParams{Query: args[0]}
@@ -153,16 +153,16 @@ func (b *Bot) cmdAdd(ctx context.Context, sender id.UserID, args []string) {
 		sp.CategoryID, perr = optInt(args[3])
 	}
 	if perr != nil {
-		b.reply(ctx, "❌ invalid number: "+perr.Error())
+		b.reply(ctx, replyTo, "❌ invalid number: "+perr.Error())
 		return
 	}
 
 	id, err := b.store.AddSearch(sp, sender.String())
 	if err != nil {
-		b.reply(ctx, "❌ could not add search: "+err.Error())
+		b.reply(ctx, replyTo, "❌ could not add search: "+err.Error())
 		return
 	}
-	b.reply(ctx, fmt.Sprintf("✅ Added search #%d: %s", id, describeParams(sp)))
+	b.reply(ctx, replyTo, fmt.Sprintf("✅ Added search #%d: %s", id, describeParams(sp)))
 
 	// Seed it now so we have a baseline; seeding emits no notifications.
 	if b.seeder != nil {
@@ -173,7 +173,7 @@ func (b *Bot) cmdAdd(ctx context.Context, sender id.UserID, args []string) {
 	}
 }
 
-func (b *Bot) cmdList(ctx context.Context, sender id.UserID) {
+func (b *Bot) cmdList(ctx context.Context, sender id.UserID, replyTo id.EventID) {
 	mod := b.isModerator(ctx, sender)
 
 	var searches []store.Search
@@ -184,11 +184,11 @@ func (b *Bot) cmdList(ctx context.Context, sender id.UserID) {
 		searches, err = b.store.ListSearchesByOwner(sender.String())
 	}
 	if err != nil {
-		b.reply(ctx, "❌ "+err.Error())
+		b.reply(ctx, replyTo, "❌ "+err.Error())
 		return
 	}
 	if len(searches) == 0 {
-		b.reply(ctx, "No searches yet. Add one with !olx add \"<query>\" <min> <max> <category_id>")
+		b.reply(ctx, replyTo, "No searches yet. Add one with !olx add \"<query>\" <min> <max> <category_id>")
 		return
 	}
 
@@ -213,65 +213,65 @@ func (b *Bot) cmdList(ctx context.Context, sender id.UserID) {
 		sb.WriteByte('\n')
 	}
 	sb.WriteString("\nUse the #index with delete/disable/enable.")
-	b.replyCode(ctx, strings.TrimRight(sb.String(), "\n"))
+	b.replyCode(ctx, replyTo, strings.TrimRight(sb.String(), "\n"))
 }
 
-func (b *Bot) cmdDelete(ctx context.Context, sender id.UserID, args []string) {
-	s, ok := b.resolveOwned(ctx, sender, args, "delete")
+func (b *Bot) cmdDelete(ctx context.Context, sender id.UserID, replyTo id.EventID, args []string) {
+	s, ok := b.resolveOwned(ctx, sender, replyTo, args, "delete")
 	if !ok {
 		return
 	}
 	if _, err := b.store.RemoveSearch(s.ID); err != nil {
-		b.reply(ctx, "❌ "+err.Error())
+		b.reply(ctx, replyTo, "❌ "+err.Error())
 		return
 	}
-	b.reply(ctx, fmt.Sprintf("🗑️ Deleted search #%d and its stored results", s.ID))
+	b.reply(ctx, replyTo, fmt.Sprintf("🗑️ Deleted search #%d and its stored results", s.ID))
 }
 
-func (b *Bot) cmdSetEnabled(ctx context.Context, sender id.UserID, args []string, enabled bool) {
+func (b *Bot) cmdSetEnabled(ctx context.Context, sender id.UserID, replyTo id.EventID, args []string, enabled bool) {
 	verb := "enable"
 	if !enabled {
 		verb = "disable"
 	}
-	s, ok := b.resolveOwned(ctx, sender, args, verb)
+	s, ok := b.resolveOwned(ctx, sender, replyTo, args, verb)
 	if !ok {
 		return
 	}
 	if _, err := b.store.SetEnabled(s.ID, enabled); err != nil {
-		b.reply(ctx, "❌ "+err.Error())
+		b.reply(ctx, replyTo, "❌ "+err.Error())
 		return
 	}
 	if enabled {
-		b.reply(ctx, fmt.Sprintf("▶️ Enabled search #%d (re-baselining silently on next poll)", s.ID))
+		b.reply(ctx, replyTo, fmt.Sprintf("▶️ Enabled search #%d (re-baselining silently on next poll)", s.ID))
 	} else {
-		b.reply(ctx, fmt.Sprintf("⏸️ Disabled search #%d (kept, but not searched until enabled)", s.ID))
+		b.reply(ctx, replyTo, fmt.Sprintf("⏸️ Disabled search #%d (kept, but not searched until enabled)", s.ID))
 	}
 }
 
 // resolveOwned parses the index argument, looks up the search, and enforces that
 // the sender either owns it or is a room moderator. It replies with the relevant
 // error and returns ok=false when the caller should stop.
-func (b *Bot) resolveOwned(ctx context.Context, sender id.UserID, args []string, verb string) (store.Search, bool) {
+func (b *Bot) resolveOwned(ctx context.Context, sender id.UserID, replyTo id.EventID, args []string, verb string) (store.Search, bool) {
 	if len(args) < 1 {
-		b.reply(ctx, "Usage: !olx "+verb+" <index>")
+		b.reply(ctx, replyTo, "Usage: !olx "+verb+" <index>")
 		return store.Search{}, false
 	}
 	id64, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
-		b.reply(ctx, "❌ invalid index: "+args[0])
+		b.reply(ctx, replyTo, "❌ invalid index: "+args[0])
 		return store.Search{}, false
 	}
 	s, found, err := b.store.GetSearch(id64)
 	if err != nil {
-		b.reply(ctx, "❌ "+err.Error())
+		b.reply(ctx, replyTo, "❌ "+err.Error())
 		return store.Search{}, false
 	}
 	if !found {
-		b.reply(ctx, fmt.Sprintf("No search #%d", id64))
+		b.reply(ctx, replyTo, fmt.Sprintf("No search #%d", id64))
 		return store.Search{}, false
 	}
 	if s.Owner != sender.String() && !b.isModerator(ctx, sender) {
-		b.reply(ctx, fmt.Sprintf("🚫 Search #%d belongs to someone else (moderators can manage any search)", id64))
+		b.reply(ctx, replyTo, fmt.Sprintf("🚫 Search #%d belongs to someone else (moderators can manage any search)", id64))
 		return store.Search{}, false
 	}
 	return s, true
@@ -281,14 +281,21 @@ func (b *Bot) resolveOwned(ctx context.Context, sender id.UserID, args []string,
 const moderatorPowerLevel = 50
 
 // isModerator reports whether the user has moderator power (PL >= 50) in the room.
+// It fetches full room state via State so the m.room.create event is wired into
+// the power levels; this makes GetUserLevel honour the room-v12 rule that the
+// creator has implicit infinite power despite being absent from the users map.
 // On any lookup error it fails closed (returns false).
 func (b *Bot) isModerator(ctx context.Context, user id.UserID) bool {
-	var pl event.PowerLevelsEventContent
-	if err := b.client.StateEvent(ctx, b.roomID, event.StatePowerLevels, "", &pl); err != nil {
-		log.Printf("matrix: fetch power levels: %v", err)
+	state, err := b.client.State(ctx, b.roomID)
+	if err != nil {
+		log.Printf("matrix: fetch room state: %v", err)
 		return false
 	}
-	return pl.GetUserLevel(user) >= moderatorPowerLevel
+	plEvt, ok := state[event.StatePowerLevels][""]
+	if !ok || plEvt == nil {
+		return false
+	}
+	return plEvt.Content.AsPowerLevels().GetUserLevel(user) >= moderatorPowerLevel
 }
 
 // photoMaxSide caps the longer edge of downloaded images.
@@ -310,7 +317,7 @@ func (b *Bot) notifyOne(ctx context.Context, s store.Search, e store.Event) {
 
 	// No photos: plain text message, nothing to thread.
 	if len(photos) == 0 {
-		b.replyHTML(ctx, plain, htmlBody, mentions)
+		b.replyHTML(ctx, "", plain, htmlBody, mentions)
 		return
 	}
 
@@ -319,7 +326,7 @@ func (b *Bot) notifyOne(ctx context.Context, s store.Search, e store.Event) {
 	if err != nil {
 		log.Printf("matrix: main photo for ad %d: %v", e.Offer.ID, err)
 		// Fall back to text so the notification isn't lost.
-		b.replyHTML(ctx, plain, htmlBody, mentions)
+		b.replyHTML(ctx, "", plain, htmlBody, mentions)
 		return
 	}
 
@@ -399,30 +406,44 @@ func (b *Bot) download(ctx context.Context, url string) ([]byte, string, error) 
 	return data, mime, nil
 }
 
-func (b *Bot) reply(ctx context.Context, text string) {
-	if _, err := b.client.SendText(ctx, b.roomID, text); err != nil {
+// replyRelation builds an m.in_reply_to relation, or nil for a standalone message.
+func replyRelation(replyTo id.EventID) *event.RelatesTo {
+	if replyTo == "" {
+		return nil
+	}
+	return (&event.RelatesTo{}).SetReplyTo(replyTo)
+}
+
+func (b *Bot) reply(ctx context.Context, replyTo id.EventID, text string) {
+	content := event.MessageEventContent{
+		MsgType:   event.MsgText,
+		Body:      text,
+		RelatesTo: replyRelation(replyTo),
+	}
+	if _, err := b.client.SendMessageEvent(ctx, b.roomID, event.EventMessage, &content); err != nil {
 		log.Printf("matrix: send: %v", err)
 	}
 }
 
-func (b *Bot) replyHTML(ctx context.Context, plain, htmlBody string, mentions *event.Mentions) {
+func (b *Bot) replyHTML(ctx context.Context, replyTo id.EventID, plain, htmlBody string, mentions *event.Mentions) {
 	content := event.MessageEventContent{
 		MsgType:       event.MsgText,
 		Body:          plain,
 		Format:        event.FormatHTML,
 		FormattedBody: htmlBody,
 		Mentions:      mentions,
+		RelatesTo:     replyRelation(replyTo),
 	}
 	if _, err := b.client.SendMessageEvent(ctx, b.roomID, event.EventMessage, &content); err != nil {
 		log.Printf("matrix: send html: %v", err)
 	}
 }
 
-// replyCode sends monospace text, wrapping it in an HTML <pre><code> block so
-// column alignment survives in clients that render formatted_body. The plain
-// body is kept as the fallback for text-only clients.
-func (b *Bot) replyCode(ctx context.Context, text string) {
-	b.replyHTML(ctx, text, "<pre><code>"+html.EscapeString(text)+"</code></pre>", nil)
+// replyCode sends monospace text as a reply, wrapping it in an HTML <pre><code>
+// block so column alignment survives in clients that render formatted_body. The
+// plain body is kept as the fallback for text-only clients.
+func (b *Bot) replyCode(ctx context.Context, replyTo id.EventID, text string) {
+	b.replyHTML(ctx, replyTo, text, "<pre><code>"+html.EscapeString(text)+"</code></pre>", nil)
 }
 
 // descriptionLimit caps how much of the ad description goes in the caption.
