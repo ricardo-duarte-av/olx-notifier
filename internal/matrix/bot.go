@@ -487,7 +487,7 @@ func formatEvent(s store.Search, e store.Event) (string, string) {
 			html.EscapeString(locSuffix))
 	}
 
-	desc := truncate(strings.TrimSpace(o.Description), descriptionLimit)
+	desc := truncate(o.CleanDescription(), descriptionLimit)
 
 	plain := headPlain + "\n" + o.URL
 	htmlBody := headHTML

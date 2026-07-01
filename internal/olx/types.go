@@ -3,6 +3,8 @@ package olx
 
 import (
 	"encoding/json"
+	"html"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -103,6 +105,31 @@ func (o Offer) PriceLabel() string {
 // City returns the offer's city name, if known.
 func (o Offer) City() string {
 	return o.Location.City.Name
+}
+
+var (
+	brRe    = regexp.MustCompile(`(?i)<br\s*/?>`)
+	tagRe   = regexp.MustCompile(`<[^>]+>`)
+	blankRe = regexp.MustCompile(`\n{3,}`)
+)
+
+// CleanDescription returns the offer description as plain text. OLX serves the
+// description as HTML (<br /> line breaks, entities), so this converts <br> to
+// newlines, strips any other tags, decodes entities, trims each line and
+// collapses runs of blank lines.
+func (o Offer) CleanDescription() string {
+	s := brRe.ReplaceAllString(o.Description, "\n")
+	s = tagRe.ReplaceAllString(s, "")
+	s = html.UnescapeString(s)
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimSpace(lines[i])
+	}
+	s = strings.Join(lines, "\n")
+	s = blankRe.ReplaceAllString(s, "\n\n")
+	return strings.TrimSpace(s)
 }
 
 // apiResponse mirrors the top-level shape of the offers endpoint response.
