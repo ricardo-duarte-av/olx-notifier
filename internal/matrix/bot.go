@@ -112,7 +112,7 @@ func (b *Bot) handleCommand(ctx context.Context, body string) {
 	}
 	// args[0] == "!olx"
 	if len(args) < 2 {
-		b.reply(ctx, helpText())
+		b.replyCode(ctx, helpText())
 		return
 	}
 
@@ -128,9 +128,9 @@ func (b *Bot) handleCommand(ctx context.Context, body string) {
 	case "enable":
 		b.cmdSetEnabled(ctx, args[2:], true)
 	case "help":
-		b.reply(ctx, helpText())
+		b.replyCode(ctx, helpText())
 	default:
-		b.reply(ctx, helpText())
+		b.replyCode(ctx, helpText())
 	}
 }
 
@@ -195,7 +195,7 @@ func (b *Bot) cmdList(ctx context.Context) {
 		fmt.Fprintf(&sb, "#%d [%s] — %s — %d ads\n", s.ID, state, describeParams(s.Params()), n)
 	}
 	sb.WriteString("\nUse the #index with delete/disable/enable.")
-	b.reply(ctx, strings.TrimRight(sb.String(), "\n"))
+	b.replyCode(ctx, strings.TrimRight(sb.String(), "\n"))
 }
 
 func (b *Bot) cmdDelete(ctx context.Context, args []string) {
@@ -377,6 +377,13 @@ func (b *Bot) replyHTML(ctx context.Context, plain, htmlBody string) {
 	if _, err := b.client.SendMessageEvent(ctx, b.roomID, event.EventMessage, &content); err != nil {
 		log.Printf("matrix: send html: %v", err)
 	}
+}
+
+// replyCode sends monospace text, wrapping it in an HTML <pre><code> block so
+// column alignment survives in clients that render formatted_body. The plain
+// body is kept as the fallback for text-only clients.
+func (b *Bot) replyCode(ctx context.Context, text string) {
+	b.replyHTML(ctx, text, "<pre><code>"+html.EscapeString(text)+"</code></pre>")
 }
 
 // descriptionLimit caps how much of the ad description goes in the caption.
