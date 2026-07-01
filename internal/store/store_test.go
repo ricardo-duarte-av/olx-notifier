@@ -54,7 +54,7 @@ func reload(t *testing.T, s *Store, id int64) Search {
 func TestReconcileSeedThenDiff(t *testing.T) {
 	s := openTemp(t)
 	min := 100
-	id, err := s.AddSearch(olx.SearchParams{Query: "iphone", MinPrice: &min})
+	id, err := s.AddSearch(olx.SearchParams{Query: "iphone", MinPrice: &min}, "@u:s")
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestReconcileSeedThenDiff(t *testing.T) {
 
 func TestSetEnabledResetsSeededOnEnable(t *testing.T) {
 	s := openTemp(t)
-	id, _ := s.AddSearch(olx.SearchParams{Query: "x"})
+	id, _ := s.AddSearch(olx.SearchParams{Query: "x"}, "@u:s")
 
 	// Seed it so seeded=1, enabled=1.
 	if _, err := s.Reconcile(reload(t, s, id), []olx.Offer{offer(1, 10)}); err != nil {
@@ -167,9 +167,46 @@ func TestSetEnabledResetsSeededOnEnable(t *testing.T) {
 	}
 }
 
+func TestOwnershipQueries(t *testing.T) {
+	s := openTemp(t)
+	a1, _ := s.AddSearch(olx.SearchParams{Query: "alice1"}, "@alice:s")
+	s.AddSearch(olx.SearchParams{Query: "bob1"}, "@bob:s")
+	s.AddSearch(olx.SearchParams{Query: "alice2"}, "@alice:s")
+
+	alice, err := s.ListSearchesByOwner("@alice:s")
+	if err != nil {
+		t.Fatalf("list by owner: %v", err)
+	}
+	if len(alice) != 2 {
+		t.Fatalf("expected 2 searches for alice, got %d", len(alice))
+	}
+	for _, se := range alice {
+		if se.Owner != "@alice:s" {
+			t.Errorf("got search owned by %q in alice's list", se.Owner)
+		}
+	}
+
+	all, _ := s.ListSearches()
+	if len(all) != 3 {
+		t.Errorf("expected 3 total searches, got %d", len(all))
+	}
+
+	got, found, err := s.GetSearch(a1)
+	if err != nil || !found {
+		t.Fatalf("GetSearch: found=%v err=%v", found, err)
+	}
+	if got.Owner != "@alice:s" || got.Query != "alice1" {
+		t.Errorf("GetSearch returned %+v", got)
+	}
+
+	if _, found, _ := s.GetSearch(9999); found {
+		t.Error("GetSearch on missing id reported found")
+	}
+}
+
 func TestRemoveSearchCascades(t *testing.T) {
 	s := openTemp(t)
-	id, _ := s.AddSearch(olx.SearchParams{Query: "x"})
+	id, _ := s.AddSearch(olx.SearchParams{Query: "x"}, "@u:s")
 	if _, err := s.Reconcile(reload(t, s, id), []olx.Offer{offer(1, 10)}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

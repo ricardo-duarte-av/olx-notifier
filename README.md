@@ -71,6 +71,20 @@ its stored ads but skips it while polling; enabling resets its baseline so ads
 posted while it was disabled are absorbed silently rather than firing a burst of
 notifications.
 
+### Multi-user
+
+Each search records the Matrix user who added it. By default users only see and
+manage their own searches:
+
+- `!olx list` shows only your searches; `disable`/`enable`/`delete` only work on
+  searches you own.
+- **Room moderators** (power level ≥ 50) see everyone's searches in `!olx list`
+  (with the owner shown) and can `disable`/`enable`/`delete` any of them.
+
+When a new listing or price change is found, the notification **pings the search
+owner** (via an `m.mentions` mention at the end of the caption), so the right
+person is notified.
+
 Example — iPhones between 100 and 200 € in the iPhone category (id 5407):
 
 ```

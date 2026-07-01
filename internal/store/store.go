@@ -26,6 +26,7 @@ type Search struct {
 	CategoryID *int
 	Seeded     bool
 	Enabled    bool
+	Owner      string // Matrix user ID that added the search
 }
 
 // Params converts a stored Search into olx.SearchParams.
@@ -103,7 +104,10 @@ CREATE TABLE IF NOT EXISTS seen_ads (
 		return err
 	}
 	// Add columns introduced after the initial schema for existing databases.
-	return s.addColumnIfMissing("searches", "enabled", "INTEGER NOT NULL DEFAULT 1")
+	if err := s.addColumnIfMissing("searches", "enabled", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	return s.addColumnIfMissing("searches", "owner", "TEXT NOT NULL DEFAULT ''")
 }
 
 // addColumnIfMissing adds a column to a table if it does not already exist.
@@ -133,18 +137,33 @@ func (s *Store) addColumnIfMissing(table, column, def string) error {
 	return err
 }
 
-// AddSearch inserts a new search and returns its id.
-func (s *Store) AddSearch(sp olx.SearchParams) (int64, error) {
+// AddSearch inserts a new search owned by the given Matrix user and returns its id.
+func (s *Store) AddSearch(sp olx.SearchParams, owner string) (int64, error) {
 	res, err := s.db.Exec(
-		`INSERT INTO searches (query, min_price, max_price, category_id, seeded, created_at)
-		 VALUES (?, ?, ?, ?, 0, ?)`,
+		`INSERT INTO searches (query, min_price, max_price, category_id, seeded, owner, created_at)
+		 VALUES (?, ?, ?, ?, 0, ?, ?)`,
 		sp.Query, nullInt(sp.MinPrice), nullInt(sp.MaxPrice), nullInt(sp.CategoryID),
-		time.Now().UTC().Format(time.RFC3339),
+		owner, time.Now().UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// GetSearch returns a single search by id, and whether it exists.
+func (s *Store) GetSearch(id int64) (Search, bool, error) {
+	row := s.db.QueryRow(
+		`SELECT id, query, min_price, max_price, category_id, seeded, enabled, owner
+		 FROM searches WHERE id = ?`, id)
+	se, err := scanSearch(row)
+	if err == sql.ErrNoRows {
+		return Search{}, false, nil
+	}
+	if err != nil {
+		return Search{}, false, err
+	}
+	return se, true, nil
 }
 
 // RemoveSearch deletes a search and (via cascade) its seen ads. It reports
@@ -177,11 +196,43 @@ func (s *Store) SetEnabled(id int64, enabled bool) (bool, error) {
 	return n > 0, nil
 }
 
-// ListSearches returns all stored searches ordered by id.
+const searchColumns = `id, query, min_price, max_price, category_id, seeded, enabled, owner`
+
+// rowScanner is satisfied by both *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanSearch reads one search row selected with searchColumns.
+func scanSearch(r rowScanner) (Search, error) {
+	var (
+		se              Search
+		min, max, cat   sql.NullInt64
+		seeded, enabled int
+	)
+	if err := r.Scan(&se.ID, &se.Query, &min, &max, &cat, &seeded, &enabled, &se.Owner); err != nil {
+		return Search{}, err
+	}
+	se.MinPrice = toPtr(min)
+	se.MaxPrice = toPtr(max)
+	se.CategoryID = toPtr(cat)
+	se.Seeded = seeded != 0
+	se.Enabled = enabled != 0
+	return se, nil
+}
+
+// ListSearches returns all stored searches ordered by id (used by the poller).
 func (s *Store) ListSearches() ([]Search, error) {
-	rows, err := s.db.Query(
-		`SELECT id, query, min_price, max_price, category_id, seeded, enabled
-		 FROM searches ORDER BY id`)
+	return s.querySearches(`SELECT ` + searchColumns + ` FROM searches ORDER BY id`)
+}
+
+// ListSearchesByOwner returns only the searches owned by the given user.
+func (s *Store) ListSearchesByOwner(owner string) ([]Search, error) {
+	return s.querySearches(`SELECT `+searchColumns+` FROM searches WHERE owner = ? ORDER BY id`, owner)
+}
+
+func (s *Store) querySearches(query string, args ...any) ([]Search, error) {
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -189,19 +240,10 @@ func (s *Store) ListSearches() ([]Search, error) {
 
 	var out []Search
 	for rows.Next() {
-		var (
-			se              Search
-			min, max, cat   sql.NullInt64
-			seeded, enabled int
-		)
-		if err := rows.Scan(&se.ID, &se.Query, &min, &max, &cat, &seeded, &enabled); err != nil {
+		se, err := scanSearch(rows)
+		if err != nil {
 			return nil, err
 		}
-		se.MinPrice = toPtr(min)
-		se.MaxPrice = toPtr(max)
-		se.CategoryID = toPtr(cat)
-		se.Seeded = seeded != 0
-		se.Enabled = enabled != 0
 		out = append(out, se)
 	}
 	return out, rows.Err()

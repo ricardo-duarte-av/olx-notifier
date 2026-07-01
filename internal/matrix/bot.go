@@ -101,10 +101,10 @@ func (b *Bot) onMessage(ctx context.Context, evt *event.Event) {
 	if !strings.HasPrefix(body, "!olx") {
 		return
 	}
-	b.handleCommand(ctx, body)
+	b.handleCommand(ctx, evt.Sender, body)
 }
 
-func (b *Bot) handleCommand(ctx context.Context, body string) {
+func (b *Bot) handleCommand(ctx context.Context, sender id.UserID, body string) {
 	args, err := tokenize(body)
 	if err != nil {
 		b.reply(ctx, "❌ "+err.Error())
@@ -118,15 +118,15 @@ func (b *Bot) handleCommand(ctx context.Context, body string) {
 
 	switch strings.ToLower(args[1]) {
 	case "add":
-		b.cmdAdd(ctx, args[2:])
+		b.cmdAdd(ctx, sender, args[2:])
 	case "list", "ls":
-		b.cmdList(ctx)
+		b.cmdList(ctx, sender)
 	case "delete", "remove", "rm", "del":
-		b.cmdDelete(ctx, args[2:])
+		b.cmdDelete(ctx, sender, args[2:])
 	case "disable":
-		b.cmdSetEnabled(ctx, args[2:], false)
+		b.cmdSetEnabled(ctx, sender, args[2:], false)
 	case "enable":
-		b.cmdSetEnabled(ctx, args[2:], true)
+		b.cmdSetEnabled(ctx, sender, args[2:], true)
 	case "help":
 		b.replyCode(ctx, helpText())
 	default:
@@ -134,7 +134,7 @@ func (b *Bot) handleCommand(ctx context.Context, body string) {
 	}
 }
 
-func (b *Bot) cmdAdd(ctx context.Context, args []string) {
+func (b *Bot) cmdAdd(ctx context.Context, sender id.UserID, args []string) {
 	// add "<query>" <min> <max> <category_id>  (min/max/category optional: - or omitted)
 	if len(args) < 1 {
 		b.reply(ctx, "Usage: !olx add \"<query>\" <min> <max> <category_id>")
@@ -157,7 +157,7 @@ func (b *Bot) cmdAdd(ctx context.Context, args []string) {
 		return
 	}
 
-	id, err := b.store.AddSearch(sp)
+	id, err := b.store.AddSearch(sp, sender.String())
 	if err != nil {
 		b.reply(ctx, "❌ could not add search: "+err.Error())
 		return
@@ -167,13 +167,22 @@ func (b *Bot) cmdAdd(ctx context.Context, args []string) {
 	// Seed it now so we have a baseline; seeding emits no notifications.
 	if b.seeder != nil {
 		go b.seeder.PollSearch(context.Background(), store.Search{
-			ID: id, Query: sp.Query, MinPrice: sp.MinPrice, MaxPrice: sp.MaxPrice, CategoryID: sp.CategoryID,
+			ID: id, Query: sp.Query, MinPrice: sp.MinPrice, MaxPrice: sp.MaxPrice,
+			CategoryID: sp.CategoryID, Owner: sender.String(),
 		})
 	}
 }
 
-func (b *Bot) cmdList(ctx context.Context) {
-	searches, err := b.store.ListSearches()
+func (b *Bot) cmdList(ctx context.Context, sender id.UserID) {
+	mod := b.isModerator(ctx, sender)
+
+	var searches []store.Search
+	var err error
+	if mod {
+		searches, err = b.store.ListSearches() // moderators see everyone's
+	} else {
+		searches, err = b.store.ListSearchesByOwner(sender.String())
+	}
 	if err != nil {
 		b.reply(ctx, "❌ "+err.Error())
 		return
@@ -182,8 +191,13 @@ func (b *Bot) cmdList(ctx context.Context) {
 		b.reply(ctx, "No searches yet. Add one with !olx add \"<query>\" <min> <max> <category_id>")
 		return
 	}
+
 	var sb strings.Builder
-	sb.WriteString("Searches:\n")
+	if mod {
+		sb.WriteString("All searches:\n")
+	} else {
+		sb.WriteString("Your searches:\n")
+	}
 	for _, s := range searches {
 		n, _ := b.store.AdCount(s.ID)
 		state := "🟢"
@@ -192,67 +206,89 @@ func (b *Bot) cmdList(ctx context.Context) {
 		} else if !s.Seeded {
 			state = "🟢 seeding…"
 		}
-		fmt.Fprintf(&sb, "#%d [%s] — %s — %d ads\n", s.ID, state, describeParams(s.Params()), n)
+		fmt.Fprintf(&sb, "#%d [%s] — %s — %d ads", s.ID, state, describeParams(s.Params()), n)
+		if mod {
+			fmt.Fprintf(&sb, " — by %s", s.Owner)
+		}
+		sb.WriteByte('\n')
 	}
 	sb.WriteString("\nUse the #index with delete/disable/enable.")
 	b.replyCode(ctx, strings.TrimRight(sb.String(), "\n"))
 }
 
-func (b *Bot) cmdDelete(ctx context.Context, args []string) {
-	id, ok := b.parseIndex(ctx, args, "delete")
+func (b *Bot) cmdDelete(ctx context.Context, sender id.UserID, args []string) {
+	s, ok := b.resolveOwned(ctx, sender, args, "delete")
 	if !ok {
 		return
 	}
-	removed, err := b.store.RemoveSearch(id)
-	if err != nil {
+	if _, err := b.store.RemoveSearch(s.ID); err != nil {
 		b.reply(ctx, "❌ "+err.Error())
 		return
 	}
-	if !removed {
-		b.reply(ctx, fmt.Sprintf("No search #%d", id))
-		return
-	}
-	b.reply(ctx, fmt.Sprintf("🗑️ Deleted search #%d and its stored results", id))
+	b.reply(ctx, fmt.Sprintf("🗑️ Deleted search #%d and its stored results", s.ID))
 }
 
-func (b *Bot) cmdSetEnabled(ctx context.Context, args []string, enabled bool) {
+func (b *Bot) cmdSetEnabled(ctx context.Context, sender id.UserID, args []string, enabled bool) {
 	verb := "enable"
 	if !enabled {
 		verb = "disable"
 	}
-	id, ok := b.parseIndex(ctx, args, verb)
+	s, ok := b.resolveOwned(ctx, sender, args, verb)
 	if !ok {
 		return
 	}
-	changed, err := b.store.SetEnabled(id, enabled)
-	if err != nil {
+	if _, err := b.store.SetEnabled(s.ID, enabled); err != nil {
 		b.reply(ctx, "❌ "+err.Error())
 		return
 	}
-	if !changed {
-		b.reply(ctx, fmt.Sprintf("No search #%d", id))
-		return
-	}
 	if enabled {
-		b.reply(ctx, fmt.Sprintf("▶️ Enabled search #%d (re-baselining silently on next poll)", id))
+		b.reply(ctx, fmt.Sprintf("▶️ Enabled search #%d (re-baselining silently on next poll)", s.ID))
 	} else {
-		b.reply(ctx, fmt.Sprintf("⏸️ Disabled search #%d (kept, but not searched until enabled)", id))
+		b.reply(ctx, fmt.Sprintf("⏸️ Disabled search #%d (kept, but not searched until enabled)", s.ID))
 	}
 }
 
-// parseIndex reads a single numeric search index from args, replying with a
-// usage hint on error.
-func (b *Bot) parseIndex(ctx context.Context, args []string, verb string) (int64, bool) {
+// resolveOwned parses the index argument, looks up the search, and enforces that
+// the sender either owns it or is a room moderator. It replies with the relevant
+// error and returns ok=false when the caller should stop.
+func (b *Bot) resolveOwned(ctx context.Context, sender id.UserID, args []string, verb string) (store.Search, bool) {
 	if len(args) < 1 {
 		b.reply(ctx, "Usage: !olx "+verb+" <index>")
-		return 0, false
+		return store.Search{}, false
 	}
-	id, err := strconv.ParseInt(args[0], 10, 64)
+	id64, err := strconv.ParseInt(args[0], 10, 64)
 	if err != nil {
 		b.reply(ctx, "❌ invalid index: "+args[0])
-		return 0, false
+		return store.Search{}, false
 	}
-	return id, true
+	s, found, err := b.store.GetSearch(id64)
+	if err != nil {
+		b.reply(ctx, "❌ "+err.Error())
+		return store.Search{}, false
+	}
+	if !found {
+		b.reply(ctx, fmt.Sprintf("No search #%d", id64))
+		return store.Search{}, false
+	}
+	if s.Owner != sender.String() && !b.isModerator(ctx, sender) {
+		b.reply(ctx, fmt.Sprintf("🚫 Search #%d belongs to someone else (moderators can manage any search)", id64))
+		return store.Search{}, false
+	}
+	return s, true
+}
+
+// moderatorPowerLevel is the minimum room power level treated as a moderator.
+const moderatorPowerLevel = 50
+
+// isModerator reports whether the user has moderator power (PL >= 50) in the room.
+// On any lookup error it fails closed (returns false).
+func (b *Bot) isModerator(ctx context.Context, user id.UserID) bool {
+	var pl event.PowerLevelsEventContent
+	if err := b.client.StateEvent(ctx, b.roomID, event.StatePowerLevels, "", &pl); err != nil {
+		log.Printf("matrix: fetch power levels: %v", err)
+		return false
+	}
+	return pl.GetUserLevel(user) >= moderatorPowerLevel
 }
 
 // photoMaxSide caps the longer edge of downloaded images.
@@ -269,37 +305,38 @@ func (b *Bot) Notify(ctx context.Context, s store.Search, events []store.Event) 
 
 func (b *Bot) notifyOne(ctx context.Context, s store.Search, e store.Event) {
 	plain, htmlBody := formatEvent(s, e)
+	mentions := ownerMentions(s.Owner) // only the first/main message pings the owner
 	photos := e.Offer.Photos
 
 	// No photos: plain text message, nothing to thread.
 	if len(photos) == 0 {
-		b.replyHTML(ctx, plain, htmlBody)
+		b.replyHTML(ctx, plain, htmlBody, mentions)
 		return
 	}
 
-	// Main photo carries the caption and becomes the thread root.
-	rootID, err := b.sendImage(ctx, photos[0], plain, htmlBody, nil)
+	// Main photo carries the caption, pings the owner, and becomes the thread root.
+	rootID, err := b.sendImage(ctx, photos[0], plain, htmlBody, nil, mentions)
 	if err != nil {
 		log.Printf("matrix: main photo for ad %d: %v", e.Offer.ID, err)
 		// Fall back to text so the notification isn't lost.
-		b.replyHTML(ctx, plain, htmlBody)
+		b.replyHTML(ctx, plain, htmlBody, mentions)
 		return
 	}
 
-	// Remaining photos go into a thread under the main message.
+	// Remaining photos go into a thread under the main message (no extra pings).
 	for i, p := range photos[1:] {
 		rel := (&event.RelatesTo{}).SetThread(rootID, rootID)
 		caption := fmt.Sprintf("Photo %d/%d", i+2, len(photos))
-		if _, err := b.sendImage(ctx, p, caption, caption, rel); err != nil {
+		if _, err := b.sendImage(ctx, p, caption, caption, rel, nil); err != nil {
 			log.Printf("matrix: thread photo %d for ad %d: %v", i+2, e.Offer.ID, err)
 		}
 	}
 }
 
 // sendImage downloads a photo, uploads it to the homeserver and sends an m.image
-// event with the given caption, optionally related (e.g. threaded). It returns
-// the sent event's ID.
-func (b *Bot) sendImage(ctx context.Context, photo olx.Photo, caption, captionHTML string, rel *event.RelatesTo) (id.EventID, error) {
+// event with the given caption, optionally related (e.g. threaded) and mentioning
+// users. It returns the sent event's ID.
+func (b *Bot) sendImage(ctx context.Context, photo olx.Photo, caption, captionHTML string, rel *event.RelatesTo, mentions *event.Mentions) (id.EventID, error) {
 	url, w, h := photo.Sized(photoMaxSide)
 	data, mime, err := b.download(ctx, url)
 	if err != nil {
@@ -322,6 +359,7 @@ func (b *Bot) sendImage(ctx context.Context, photo olx.Photo, caption, captionHT
 			Size:     len(data),
 		},
 		RelatesTo: rel,
+		Mentions:  mentions,
 	}
 	if captionHTML != "" {
 		content.Format = event.FormatHTML
@@ -367,12 +405,13 @@ func (b *Bot) reply(ctx context.Context, text string) {
 	}
 }
 
-func (b *Bot) replyHTML(ctx context.Context, plain, htmlBody string) {
+func (b *Bot) replyHTML(ctx context.Context, plain, htmlBody string, mentions *event.Mentions) {
 	content := event.MessageEventContent{
 		MsgType:       event.MsgText,
 		Body:          plain,
 		Format:        event.FormatHTML,
 		FormattedBody: htmlBody,
+		Mentions:      mentions,
 	}
 	if _, err := b.client.SendMessageEvent(ctx, b.roomID, event.EventMessage, &content); err != nil {
 		log.Printf("matrix: send html: %v", err)
@@ -383,7 +422,7 @@ func (b *Bot) replyHTML(ctx context.Context, plain, htmlBody string) {
 // column alignment survives in clients that render formatted_body. The plain
 // body is kept as the fallback for text-only clients.
 func (b *Bot) replyCode(ctx context.Context, text string) {
-	b.replyHTML(ctx, text, "<pre><code>"+html.EscapeString(text)+"</code></pre>")
+	b.replyHTML(ctx, text, "<pre><code>"+html.EscapeString(text)+"</code></pre>", nil)
 }
 
 // descriptionLimit caps how much of the ad description goes in the caption.
@@ -435,7 +474,26 @@ func formatEvent(s store.Search, e store.Event) (string, string) {
 		plain += "\n\n" + desc
 		htmlBody += "<br><br>" + strings.ReplaceAll(html.EscapeString(desc), "\n", "<br>")
 	}
+	// Ping the search owner at the end of the caption.
+	if s.Owner != "" {
+		plain += "\n\n🔔 " + s.Owner
+		htmlBody += "<br><br>🔔 " + mentionHTML(s.Owner)
+	}
 	return plain, htmlBody
+}
+
+// mentionHTML renders a Matrix user-mention pill for the given user ID.
+func mentionHTML(userID string) string {
+	return fmt.Sprintf("<a href=\"https://matrix.to/#/%s\">%s</a>",
+		html.EscapeString(userID), html.EscapeString(userID))
+}
+
+// ownerMentions builds the m.mentions payload that actually triggers a ping.
+func ownerMentions(owner string) *event.Mentions {
+	if owner == "" {
+		return nil
+	}
+	return &event.Mentions{UserIDs: []id.UserID{id.UserID(owner)}}
 }
 
 // truncate shortens s to at most n runes, appending an ellipsis if cut.
