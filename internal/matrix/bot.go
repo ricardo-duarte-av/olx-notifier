@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ricardo-duarte-av/olx-notifier/internal/config"
@@ -36,6 +37,10 @@ type Bot struct {
 	startTS int64 // ms; ignore messages older than this
 	seeder  Seeder
 	http    *http.Client
+	olx     *olx.Client
+
+	catMu sync.Mutex
+	cats  []olx.Category // cached category tree (lazy-loaded)
 }
 
 // New builds a Bot from config, using token authentication.
@@ -50,6 +55,7 @@ func New(cfg *config.Config, st *store.Store) (*Bot, error) {
 		roomID:  id.RoomID(cfg.Matrix.RoomID),
 		startTS: time.Now().UnixMilli(),
 		http:    &http.Client{Timeout: 30 * time.Second},
+		olx:     olx.NewClient(),
 	}, nil
 }
 
@@ -127,6 +133,8 @@ func (b *Bot) handleCommand(ctx context.Context, sender id.UserID, replyTo id.Ev
 		b.cmdSetEnabled(ctx, sender, replyTo, args[2:], false)
 	case "enable":
 		b.cmdSetEnabled(ctx, sender, replyTo, args[2:], true)
+	case "categories", "cat", "cats":
+		b.cmdCategories(ctx, replyTo, args[2:])
 	case "help":
 		b.replyCode(ctx, replyTo, helpText())
 	default:
@@ -246,6 +254,51 @@ func (b *Bot) cmdSetEnabled(ctx context.Context, sender id.UserID, replyTo id.Ev
 	} else {
 		b.reply(ctx, replyTo, fmt.Sprintf("⏸️ Disabled search #%d (kept, but not searched until enabled)", s.ID))
 	}
+}
+
+// categoryResultLimit caps how many category matches are shown.
+const categoryResultLimit = 20
+
+func (b *Bot) cmdCategories(ctx context.Context, replyTo id.EventID, args []string) {
+	term := strings.TrimSpace(strings.Join(args, " "))
+	if term == "" {
+		b.reply(ctx, replyTo, `Usage: !olx categories <search term>  — e.g. !olx categories iphone`)
+		return
+	}
+
+	cats, err := b.categories(ctx)
+	if err != nil {
+		b.reply(ctx, replyTo, "❌ could not load categories: "+err.Error())
+		return
+	}
+	matches := olx.SearchCategories(cats, term, categoryResultLimit)
+	if len(matches) == 0 {
+		b.reply(ctx, replyTo, fmt.Sprintf("No categories match %q", term))
+		return
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Categories matching %q:\n", term)
+	for _, c := range matches {
+		fmt.Fprintf(&sb, "%d — %s  (%s)\n", c.ID, c.Name, c.Path)
+	}
+	sb.WriteString("\nUse the number as <category_id> in !olx add.")
+	b.replyCode(ctx, replyTo, strings.TrimRight(sb.String(), "\n"))
+}
+
+// categories returns the OLX category tree, fetching and caching it on first use.
+func (b *Bot) categories(ctx context.Context) ([]olx.Category, error) {
+	b.catMu.Lock()
+	defer b.catMu.Unlock()
+	if b.cats != nil {
+		return b.cats, nil
+	}
+	cats, err := b.olx.FetchCategories(ctx)
+	if err != nil {
+		return nil, err
+	}
+	b.cats = cats
+	return cats, nil
 }
 
 // resolveOwned parses the index argument, looks up the search, and enforces that
@@ -590,6 +643,7 @@ func helpText() string {
 	return strings.Join([]string{
 		"OLX notifier commands:",
 		`  !olx add "<query>" <min> <max> <category_id>  — add a search (use - to skip a filter)`,
+		"  !olx categories <term>                        — find category ids by name",
 		"  !olx list                                     — list searches with their #index and state",
 		"  !olx disable <index>                          — stop searching an entry (kept in the DB)",
 		"  !olx enable <index>                           — resume a disabled entry",
