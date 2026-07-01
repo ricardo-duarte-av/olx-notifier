@@ -32,6 +32,9 @@ type Offer struct {
 		City struct {
 			Name string `json:"name"`
 		} `json:"city"`
+		Region struct {
+			Name string `json:"name"`
+		} `json:"region"`
 	} `json:"location"`
 }
 
@@ -105,6 +108,25 @@ func (o Offer) PriceLabel() string {
 // City returns the offer's city name, if known.
 func (o Offer) City() string {
 	return o.Location.City.Name
+}
+
+// Region returns the offer's region/district name, if known.
+func (o Offer) Region() string {
+	return o.Location.Region.Name
+}
+
+// LocationLabel returns "City, Region" (matching how OLX shows it), omitting any
+// missing part.
+func (o Offer) LocationLabel() string {
+	city, region := o.City(), o.Region()
+	switch {
+	case city != "" && region != "":
+		return city + ", " + region
+	case city != "":
+		return city
+	default:
+		return region
+	}
 }
 
 var (

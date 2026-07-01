@@ -454,7 +454,7 @@ const descriptionLimit = 300
 func formatEvent(s store.Search, e store.Event) (string, string) {
 	o := e.Offer
 	locSuffix := ""
-	if loc := o.City(); loc != "" {
+	if loc := o.LocationLabel(); loc != "" {
 		locSuffix = " · " + loc
 	}
 
