@@ -25,6 +25,7 @@ type Search struct {
 	MaxPrice   *int
 	CategoryID *int
 	Seeded     bool
+	Enabled    bool
 }
 
 // Params converts a stored Search into olx.SearchParams.
@@ -84,6 +85,7 @@ CREATE TABLE IF NOT EXISTS searches (
   max_price   INTEGER,
   category_id INTEGER,
   seeded      INTEGER NOT NULL DEFAULT 0,
+  enabled     INTEGER NOT NULL DEFAULT 1,
   created_at  TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS seen_ads (
@@ -97,7 +99,37 @@ CREATE TABLE IF NOT EXISTS seen_ads (
   PRIMARY KEY (search_id, ad_id),
   FOREIGN KEY (search_id) REFERENCES searches(id) ON DELETE CASCADE
 );`
-	_, err := s.db.Exec(schema)
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	// Add columns introduced after the initial schema for existing databases.
+	return s.addColumnIfMissing("searches", "enabled", "INTEGER NOT NULL DEFAULT 1")
+}
+
+// addColumnIfMissing adds a column to a table if it does not already exist.
+func (s *Store) addColumnIfMissing(table, column, def string) error {
+	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, ctype      string
+			dflt             sql.NullString
+		)
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, def))
 	return err
 }
 
@@ -126,10 +158,29 @@ func (s *Store) RemoveSearch(id int64) (bool, error) {
 	return n > 0, nil
 }
 
+// SetEnabled enables or disables a search. Re-enabling also resets the seeded
+// flag so the next poll silently re-baselines the search: ads posted while it
+// was disabled are absorbed without a burst of notifications. It reports whether
+// a row was affected.
+func (s *Store) SetEnabled(id int64, enabled bool) (bool, error) {
+	var res sql.Result
+	var err error
+	if enabled {
+		res, err = s.db.Exec(`UPDATE searches SET enabled = 1, seeded = 0 WHERE id = ?`, id)
+	} else {
+		res, err = s.db.Exec(`UPDATE searches SET enabled = 0 WHERE id = ?`, id)
+	}
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // ListSearches returns all stored searches ordered by id.
 func (s *Store) ListSearches() ([]Search, error) {
 	rows, err := s.db.Query(
-		`SELECT id, query, min_price, max_price, category_id, seeded
+		`SELECT id, query, min_price, max_price, category_id, seeded, enabled
 		 FROM searches ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -139,17 +190,18 @@ func (s *Store) ListSearches() ([]Search, error) {
 	var out []Search
 	for rows.Next() {
 		var (
-			se            Search
-			min, max, cat sql.NullInt64
-			seeded        int
+			se              Search
+			min, max, cat   sql.NullInt64
+			seeded, enabled int
 		)
-		if err := rows.Scan(&se.ID, &se.Query, &min, &max, &cat, &seeded); err != nil {
+		if err := rows.Scan(&se.ID, &se.Query, &min, &max, &cat, &seeded, &enabled); err != nil {
 			return nil, err
 		}
 		se.MinPrice = toPtr(min)
 		se.MaxPrice = toPtr(max)
 		se.CategoryID = toPtr(cat)
 		se.Seeded = seeded != 0
+		se.Enabled = enabled != 0
 		out = append(out, se)
 	}
 	return out, rows.Err()

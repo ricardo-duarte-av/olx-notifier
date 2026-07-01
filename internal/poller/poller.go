@@ -57,6 +57,9 @@ func (p *Poller) pollAll(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		if !s.Enabled {
+			continue
+		}
 		p.pollOne(ctx, s)
 	}
 }

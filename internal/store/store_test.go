@@ -122,6 +122,51 @@ func TestReconcileSeedThenDiff(t *testing.T) {
 	}
 }
 
+func TestSetEnabledResetsSeededOnEnable(t *testing.T) {
+	s := openTemp(t)
+	id, _ := s.AddSearch(olx.SearchParams{Query: "x"})
+
+	// Seed it so seeded=1, enabled=1.
+	if _, err := s.Reconcile(reload(t, s, id), []olx.Offer{offer(1, 10)}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if se := reload(t, s, id); !se.Seeded || !se.Enabled {
+		t.Fatalf("after seed: seeded=%v enabled=%v", se.Seeded, se.Enabled)
+	}
+
+	// Disable: enabled=0, seeded unchanged.
+	if changed, err := s.SetEnabled(id, false); err != nil || !changed {
+		t.Fatalf("disable: changed=%v err=%v", changed, err)
+	}
+	if se := reload(t, s, id); se.Enabled || !se.Seeded {
+		t.Fatalf("after disable: enabled=%v seeded=%v", se.Enabled, se.Seeded)
+	}
+
+	// Enable: enabled=1 and seeded reset to 0 (silent re-baseline).
+	if changed, err := s.SetEnabled(id, true); err != nil || !changed {
+		t.Fatalf("enable: changed=%v err=%v", changed, err)
+	}
+	se := reload(t, s, id)
+	if !se.Enabled || se.Seeded {
+		t.Fatalf("after enable: enabled=%v seeded=%v (want enabled, not seeded)", se.Enabled, se.Seeded)
+	}
+
+	// Re-enabling means the next reconcile seeds silently (no events) even
+	// though ad 2 is new.
+	ev, err := s.Reconcile(se, []olx.Offer{offer(1, 10), offer(2, 20)})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if len(ev) != 0 {
+		t.Fatalf("expected silent re-baseline, got %d events", len(ev))
+	}
+
+	// Unknown id reports no change.
+	if changed, _ := s.SetEnabled(9999, false); changed {
+		t.Error("SetEnabled on missing id reported a change")
+	}
+}
+
 func TestRemoveSearchCascades(t *testing.T) {
 	s := openTemp(t)
 	id, _ := s.AddSearch(olx.SearchParams{Query: "x"})

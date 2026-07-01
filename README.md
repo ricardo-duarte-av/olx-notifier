@@ -60,9 +60,16 @@ Send these in the configured room:
 | Command | Description |
 | --- | --- |
 | `!olx add "<query>" <min> <max> <category_id>` | Add a search. Use `-` to skip a filter. |
-| `!olx list` | List searches with filters and ad counts. |
-| `!olx remove <id>` | Remove a search (and its stored ads). |
-| `!olx help` | Show usage. |
+| `!olx list` | List searches with their `#index`, state, filters and ad counts. |
+| `!olx disable <index>` | Stop searching an entry (kept in the DB). |
+| `!olx enable <index>` | Resume a disabled entry (silently re-baselines on next poll). |
+| `!olx delete <index>` | Permanently delete an entry and its stored results. |
+| `!olx` / `!olx help` | Show the command list. |
+
+The `<index>` is the `#N` shown by `!olx list`. Disabling keeps the entry and
+its stored ads but skips it while polling; enabling resets its baseline so ads
+posted while it was disabled are absorbed silently rather than firing a burst of
+notifications.
 
 Example — iPhones between 100 and 200 € in the iPhone category (id 5407):
 

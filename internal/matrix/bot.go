@@ -119,10 +119,16 @@ func (b *Bot) handleCommand(ctx context.Context, body string) {
 	switch strings.ToLower(args[1]) {
 	case "add":
 		b.cmdAdd(ctx, args[2:])
-	case "list":
+	case "list", "ls":
 		b.cmdList(ctx)
-	case "remove", "rm", "del":
-		b.cmdRemove(ctx, args[2:])
+	case "delete", "remove", "rm", "del":
+		b.cmdDelete(ctx, args[2:])
+	case "disable":
+		b.cmdSetEnabled(ctx, args[2:], false)
+	case "enable":
+		b.cmdSetEnabled(ctx, args[2:], true)
+	case "help":
+		b.reply(ctx, helpText())
 	default:
 		b.reply(ctx, helpText())
 	}
@@ -180,23 +186,21 @@ func (b *Bot) cmdList(ctx context.Context) {
 	sb.WriteString("Searches:\n")
 	for _, s := range searches {
 		n, _ := b.store.AdCount(s.ID)
-		status := ""
-		if !s.Seeded {
-			status = " (seeding…)"
+		state := "🟢"
+		if !s.Enabled {
+			state = "⏸️ disabled"
+		} else if !s.Seeded {
+			state = "🟢 seeding…"
 		}
-		fmt.Fprintf(&sb, "#%d — %s — %d ads%s\n", s.ID, describeParams(s.Params()), n, status)
+		fmt.Fprintf(&sb, "#%d [%s] — %s — %d ads\n", s.ID, state, describeParams(s.Params()), n)
 	}
+	sb.WriteString("\nUse the #index with delete/disable/enable.")
 	b.reply(ctx, strings.TrimRight(sb.String(), "\n"))
 }
 
-func (b *Bot) cmdRemove(ctx context.Context, args []string) {
-	if len(args) < 1 {
-		b.reply(ctx, "Usage: !olx remove <id>")
-		return
-	}
-	id, err := strconv.ParseInt(args[0], 10, 64)
-	if err != nil {
-		b.reply(ctx, "❌ invalid id")
+func (b *Bot) cmdDelete(ctx context.Context, args []string) {
+	id, ok := b.parseIndex(ctx, args, "delete")
+	if !ok {
 		return
 	}
 	removed, err := b.store.RemoveSearch(id)
@@ -208,7 +212,47 @@ func (b *Bot) cmdRemove(ctx context.Context, args []string) {
 		b.reply(ctx, fmt.Sprintf("No search #%d", id))
 		return
 	}
-	b.reply(ctx, fmt.Sprintf("🗑️ Removed search #%d", id))
+	b.reply(ctx, fmt.Sprintf("🗑️ Deleted search #%d and its stored results", id))
+}
+
+func (b *Bot) cmdSetEnabled(ctx context.Context, args []string, enabled bool) {
+	verb := "enable"
+	if !enabled {
+		verb = "disable"
+	}
+	id, ok := b.parseIndex(ctx, args, verb)
+	if !ok {
+		return
+	}
+	changed, err := b.store.SetEnabled(id, enabled)
+	if err != nil {
+		b.reply(ctx, "❌ "+err.Error())
+		return
+	}
+	if !changed {
+		b.reply(ctx, fmt.Sprintf("No search #%d", id))
+		return
+	}
+	if enabled {
+		b.reply(ctx, fmt.Sprintf("▶️ Enabled search #%d (re-baselining silently on next poll)", id))
+	} else {
+		b.reply(ctx, fmt.Sprintf("⏸️ Disabled search #%d (kept, but not searched until enabled)", id))
+	}
+}
+
+// parseIndex reads a single numeric search index from args, replying with a
+// usage hint on error.
+func (b *Bot) parseIndex(ctx context.Context, args []string, verb string) (int64, bool) {
+	if len(args) < 1 {
+		b.reply(ctx, "Usage: !olx "+verb+" <index>")
+		return 0, false
+	}
+	id, err := strconv.ParseInt(args[0], 10, 64)
+	if err != nil {
+		b.reply(ctx, "❌ invalid index: "+args[0])
+		return 0, false
+	}
+	return id, true
 }
 
 // photoMaxSide caps the longer edge of downloaded images.
@@ -460,7 +504,10 @@ func helpText() string {
 	return strings.Join([]string{
 		"OLX notifier commands:",
 		`  !olx add "<query>" <min> <max> <category_id>  — add a search (use - to skip a filter)`,
-		"  !olx list                                     — list searches",
-		"  !olx remove <id>                              — remove a search",
+		"  !olx list                                     — list searches with their #index and state",
+		"  !olx disable <index>                          — stop searching an entry (kept in the DB)",
+		"  !olx enable <index>                           — resume a disabled entry",
+		"  !olx delete <index>                           — permanently delete an entry and its results",
+		"  !olx help                                     — show this help",
 	}, "\n")
 }
