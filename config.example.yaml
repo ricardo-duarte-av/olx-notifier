@@ -1,0 +1,9 @@
+matrix:
+  homeserver: "https://matrix.org"
+  user_id: "@olxbot:matrix.org"
+  access_token: "syt_..."      # token auth (obtain via your client or /login)
+  room_id: "!abc:matrix.org"   # room to post notifications / accept commands
+poll:
+  interval_seconds: 300        # global default poll cadence
+  max_pages: 10                # safety cap on pagination per search
+db_path: "./olx.db"
