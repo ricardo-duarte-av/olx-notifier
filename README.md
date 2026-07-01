@@ -60,7 +60,7 @@ Send these in the configured room:
 | Command | Description |
 | --- | --- |
 | `!olx add "<query>" <min> <max> <category_id>` | Add a search. Use `-` to skip a filter. |
-| `!olx categories <term>` | Find category ids by name (use the number as `<category_id>`). |
+| `!olx categories [term\|id]` | No arg lists the top-level sections; a number drills into that category's children; text searches by name. Use the id as `<category_id>`. |
 | `!olx list` | List searches with their `#index`, state, filters and ad counts. |
 | `!olx disable <index>` | Stop searching an entry (kept in the DB). |
 | `!olx enable <index>` | Resume a disabled entry (silently re-baselines on next poll). |

@@ -82,6 +82,47 @@ func parseCategories(html []byte) ([]Category, error) {
 	return out, nil
 }
 
+// topLevel is the tree depth of the root sections (single-segment paths).
+const topLevel = 1
+
+// TopLevelCategories returns the root sections, sorted by name.
+func TopLevelCategories(cats []Category) []Category {
+	var out []Category
+	for _, c := range cats {
+		if c.Level == topLevel {
+			out = append(out, c)
+		}
+	}
+	sortByName(out)
+	return out
+}
+
+// ChildCategories returns the direct children of parentID, sorted by name.
+func ChildCategories(cats []Category, parentID int) []Category {
+	var out []Category
+	for _, c := range cats {
+		if c.ParentID == parentID {
+			out = append(out, c)
+		}
+	}
+	sortByName(out)
+	return out
+}
+
+// CategoryByID returns the category with the given id, if present.
+func CategoryByID(cats []Category, id int) (Category, bool) {
+	for _, c := range cats {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return Category{}, false
+}
+
+func sortByName(cats []Category) {
+	sort.SliceStable(cats, func(i, j int) bool { return cats[i].Name < cats[j].Name })
+}
+
 // SearchCategories returns categories matching term (case-insensitive), ranked
 // by how closely the name matches, then path, capped at limit results.
 func SearchCategories(cats []Category, term string, limit int) []Category {

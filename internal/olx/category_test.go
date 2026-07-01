@@ -51,6 +51,38 @@ func TestSearchCategories(t *testing.T) {
 	}
 }
 
+func TestTopLevelAndChildren(t *testing.T) {
+	cats := []Category{
+		{ID: 25, Name: "Telemóveis", Path: "telemoveis-e-tablets", Level: 1},
+		{ID: 11, Name: "Animais", Path: "animais", Level: 1},
+		{ID: 219, Name: "Telemóveis", ParentID: 25, Path: "telemoveis-e-tablets/telemoveis", Level: 2},
+		{ID: 5407, Name: "iPhone", ParentID: 219, Path: "telemoveis-e-tablets/telemoveis/iphone", Level: 3},
+	}
+
+	top := TopLevelCategories(cats)
+	if len(top) != 2 {
+		t.Fatalf("expected 2 top-level, got %d", len(top))
+	}
+	if top[0].Name != "Animais" { // sorted by name
+		t.Errorf("expected Animais first, got %q", top[0].Name)
+	}
+
+	children := ChildCategories(cats, 219)
+	if len(children) != 1 || children[0].ID != 5407 {
+		t.Errorf("expected [5407] as children of 219, got %+v", children)
+	}
+	if n := len(ChildCategories(cats, 5407)); n != 0 {
+		t.Errorf("leaf 5407 should have no children, got %d", n)
+	}
+
+	if c, ok := CategoryByID(cats, 5407); !ok || c.Name != "iPhone" {
+		t.Errorf("CategoryByID(5407) = %+v, %v", c, ok)
+	}
+	if _, ok := CategoryByID(cats, 99999); ok {
+		t.Error("CategoryByID on missing id reported ok")
+	}
+}
+
 func TestFetchCategoriesLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping live network test in -short mode")

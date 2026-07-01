@@ -260,30 +260,82 @@ func (b *Bot) cmdSetEnabled(ctx context.Context, sender id.UserID, replyTo id.Ev
 const categoryResultLimit = 20
 
 func (b *Bot) cmdCategories(ctx context.Context, replyTo id.EventID, args []string) {
-	term := strings.TrimSpace(strings.Join(args, " "))
-	if term == "" {
-		b.reply(ctx, replyTo, `Usage: !olx categories <search term>  — e.g. !olx categories iphone`)
-		return
-	}
-
 	cats, err := b.categories(ctx)
 	if err != nil {
 		b.reply(ctx, replyTo, "❌ could not load categories: "+err.Error())
 		return
 	}
-	matches := olx.SearchCategories(cats, term, categoryResultLimit)
-	if len(matches) == 0 {
-		b.reply(ctx, replyTo, fmt.Sprintf("No categories match %q", term))
+	term := strings.TrimSpace(strings.Join(args, " "))
+
+	switch {
+	case term == "":
+		// No argument: list the top-level sections to browse from.
+		b.replyCategoryList(ctx, replyTo,
+			"Top-level categories (drill in with !olx categories <id>):",
+			olx.TopLevelCategories(cats), false)
+
+	case isInt(term):
+		// Numeric argument: drill down into that category's children.
+		b.cmdCategoryChildren(ctx, replyTo, cats, mustInt(term))
+
+	default:
+		// Text: keyword search by name.
+		matches := olx.SearchCategories(cats, term, categoryResultLimit)
+		if len(matches) == 0 {
+			b.reply(ctx, replyTo, fmt.Sprintf(
+				"No category named like %q. Categories are broad sections (e.g. \"computador\", "+
+					"\"telemoveis\"), not product keywords — your search query already matches keywords. "+
+					"Try a broader term, browse with !olx categories, or use - for no category.", term))
+			return
+		}
+		b.replyCategoryList(ctx, replyTo,
+			fmt.Sprintf("Categories matching %q:", term), matches, len(matches) >= categoryResultLimit)
+	}
+}
+
+func (b *Bot) cmdCategoryChildren(ctx context.Context, replyTo id.EventID, cats []olx.Category, parentID int) {
+	parent, ok := olx.CategoryByID(cats, parentID)
+	if !ok {
+		b.reply(ctx, replyTo, fmt.Sprintf("No category #%d. Browse with !olx categories.", parentID))
 		return
 	}
+	children := olx.ChildCategories(cats, parentID)
+	if len(children) == 0 {
+		b.reply(ctx, replyTo, fmt.Sprintf(
+			"%d — %s is a leaf category (no subcategories); use it directly as <category_id>.",
+			parent.ID, parent.Name))
+		return
+	}
+	if len(children) > categoryResultLimit {
+		children = children[:categoryResultLimit]
+	}
+	b.replyCategoryList(ctx, replyTo,
+		fmt.Sprintf("Subcategories of %s (#%d):", parent.Name, parent.ID),
+		children, len(olx.ChildCategories(cats, parentID)) > categoryResultLimit)
+}
 
+// replyCategoryList renders a category list as a monospace reply.
+func (b *Bot) replyCategoryList(ctx context.Context, replyTo id.EventID, header string, cats []olx.Category, truncated bool) {
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Categories matching %q:\n", term)
-	for _, c := range matches {
+	sb.WriteString(header + "\n")
+	for _, c := range cats {
 		fmt.Fprintf(&sb, "%d — %s  (%s)\n", c.ID, c.Name, c.Path)
+	}
+	if truncated {
+		sb.WriteString("… (more results not shown — refine your term)\n")
 	}
 	sb.WriteString("\nUse the number as <category_id> in !olx add.")
 	b.replyCode(ctx, replyTo, strings.TrimRight(sb.String(), "\n"))
+}
+
+func isInt(s string) bool {
+	_, err := strconv.Atoi(s)
+	return err == nil
+}
+
+func mustInt(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
 }
 
 // categories returns the OLX category tree, fetching and caching it on first use.
@@ -643,7 +695,7 @@ func helpText() string {
 	return strings.Join([]string{
 		"OLX notifier commands:",
 		`  !olx add "<query>" <min> <max> <category_id>  — add a search (use - to skip a filter)`,
-		"  !olx categories <term>                        — find category ids by name",
+		"  !olx categories [term|id]                     — browse top-level, drill into <id>, or search by name",
 		"  !olx list                                     — list searches with their #index and state",
 		"  !olx disable <index>                          — stop searching an entry (kept in the DB)",
 		"  !olx enable <index>                           — resume a disabled entry",
