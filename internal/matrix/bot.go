@@ -436,12 +436,18 @@ func (b *Bot) notifyOne(ctx context.Context, s store.Search, e store.Event) {
 	}
 
 	// Remaining photos go into a thread under the main message (no extra pings).
+	// The thread root stays rootID, but the reply-fallback chains to the previous
+	// message in the thread so non-threaded clients render a proper reply chain.
+	prevID := rootID
 	for i, p := range photos[1:] {
-		rel := (&event.RelatesTo{}).SetThread(rootID, rootID)
+		rel := (&event.RelatesTo{}).SetThread(rootID, prevID)
 		caption := fmt.Sprintf("Photo %d/%d", i+2, len(photos))
-		if _, err := b.sendImage(ctx, p, caption, caption, rel, nil); err != nil {
+		sentID, err := b.sendImage(ctx, p, caption, caption, rel, nil)
+		if err != nil {
 			log.Printf("matrix: thread photo %d for ad %d: %v", i+2, e.Offer.ID, err)
+			continue
 		}
+		prevID = sentID
 	}
 }
 
