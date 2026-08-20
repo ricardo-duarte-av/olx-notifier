@@ -46,7 +46,7 @@ func main() {
 	}
 
 	p := poller.New(st, olx.NewClient(), bot,
-		time.Duration(cfg.Poll.IntervalSeconds)*time.Second, cfg.Poll.MaxPages)
+		time.Duration(cfg.Poll.IntervalSeconds)*time.Second, cfg.Poll.Jitter(), cfg.Poll.MaxPages)
 	bot.SetSeeder(p)
 
 	// Cancel everything on SIGINT/SIGTERM.
@@ -55,7 +55,8 @@ func main() {
 
 	go p.Run(ctx)
 
-	log.Printf("olx-notifier started (interval=%ds, db=%s)", cfg.Poll.IntervalSeconds, cfg.DBPath)
+	log.Printf("olx-notifier started (interval=%ds ±%.0f%%, db=%s)",
+		cfg.Poll.IntervalSeconds, cfg.Poll.Jitter()*100, cfg.DBPath)
 	if err := bot.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatalf("matrix sync: %v", err)
 	}

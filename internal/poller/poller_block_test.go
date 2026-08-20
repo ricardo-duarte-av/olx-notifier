@@ -15,9 +15,14 @@ import (
 	"github.com/ricardo-duarte-av/olx-notifier/internal/store"
 )
 
-type nopNotifier struct{}
+// recorder captures what the poller would post to the room.
+type recorder struct {
+	alerts []string
+}
 
-func (nopNotifier) Notify(context.Context, store.Search, []store.Event) {}
+func (*recorder) Notify(context.Context, store.Search, []store.Event) {}
+
+func (r *recorder) Alert(_ context.Context, text string) { r.alerts = append(r.alerts, text) }
 
 // TestPollAllBlockReporting exercises the real logging path against live OLX.
 // Run it with GODEBUG=tlssha1=0 to force CloudFront blocks and see the
@@ -45,6 +50,10 @@ func TestPollAllBlockReporting(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	// Logging is the subject under test; inspect -v output.
-	New(st, olx.NewClient(), nopNotifier{}, time.Minute, 1).pollAll(ctx)
+	// Logging and alerting are the subject under test; inspect -v output.
+	rec := &recorder{}
+	New(st, olx.NewClient(), rec, time.Minute, 0.1, 1).pollAll(ctx)
+	for _, a := range rec.alerts {
+		t.Logf("ROOM ALERT:\n%s", a)
+	}
 }

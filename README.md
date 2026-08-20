@@ -42,10 +42,17 @@ matrix:
 poll:
   interval_seconds: 300   # minimum 30
   max_pages: 10           # pagination cap per search (50 ads/page)
+  jitter_percent: 10      # spread each tick by ±this much (0-50, 0 disables)
 db_path: "./olx.db"
 ```
 
 `config.yaml` and `*.db` are gitignored.
+
+Each poll waits `interval_seconds` ± `jitter_percent`, so the daemon does not
+hit OLX on a perfectly regular beat. If every search fails in a cycle — an
+outage, or OLX blocking this host — the bot posts a warning to the room and
+posts again once polling recovers, so the silence is never mistaken for "no
+new ads".
 
 ## Run
 

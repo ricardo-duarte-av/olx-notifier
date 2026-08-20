@@ -415,6 +415,19 @@ func (b *Bot) Notify(ctx context.Context, s store.Search, events []store.Event) 
 	}
 }
 
+// Alert posts an unprompted operational warning to the room. It is sent as a
+// notice (not a reply) so clients render it as bot output rather than a message
+// in a thread.
+func (b *Bot) Alert(ctx context.Context, text string) {
+	content := event.MessageEventContent{
+		MsgType: event.MsgNotice,
+		Body:    text,
+	}
+	if _, err := b.client.SendMessageEvent(ctx, b.roomID, event.EventMessage, &content); err != nil {
+		log.Printf("matrix: send alert: %v", err)
+	}
+}
+
 func (b *Bot) notifyOne(ctx context.Context, s store.Search, e store.Event) {
 	plain, htmlBody := formatEvent(s, e)
 	mentions := ownerMentions(s.Owner) // only the first/main message pings the owner

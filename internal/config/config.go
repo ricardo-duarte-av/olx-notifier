@@ -27,6 +27,20 @@ type Matrix struct {
 type Poll struct {
 	IntervalSeconds int `yaml:"interval_seconds"`
 	MaxPages        int `yaml:"max_pages"`
+
+	// JitterPercent spreads each tick randomly by ±this percentage of the
+	// interval, so the daemon does not hit OLX on a perfectly regular beat.
+	// A pointer so an explicit "jitter_percent: 0" disables jitter rather than
+	// reading as unset.
+	JitterPercent *int `yaml:"jitter_percent"`
+}
+
+// Jitter returns the tick spread as a fraction of the interval (0.1 = ±10%).
+func (p Poll) Jitter() float64 {
+	if p.JitterPercent == nil {
+		return 0.1
+	}
+	return float64(*p.JitterPercent) / 100
 }
 
 // Load reads, parses and validates the config file at path.
@@ -72,6 +86,8 @@ func (c *Config) validate() error {
 		return fmt.Errorf("matrix.room_id is required")
 	case c.Poll.IntervalSeconds < 30:
 		return fmt.Errorf("poll.interval_seconds must be >= 30 to avoid hammering OLX")
+	case c.Poll.JitterPercent != nil && (*c.Poll.JitterPercent < 0 || *c.Poll.JitterPercent > 50):
+		return fmt.Errorf("poll.jitter_percent must be between 0 and 50")
 	}
 	return nil
 }

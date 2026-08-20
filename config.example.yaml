@@ -6,4 +6,5 @@ matrix:
 poll:
   interval_seconds: 300        # global default poll cadence
   max_pages: 10                # safety cap on pagination per search
+  jitter_percent: 10           # spread each tick by ±this much (0-50, 0 disables)
 db_path: "./olx.db"
