@@ -60,6 +60,44 @@ new ads".
 ./olx-notifier -config config.yaml
 ```
 
+## Docker
+
+Each push builds a multi-arch image (`linux/amd64`, `linux/arm64`) and publishes
+it to GHCR as `ghcr.io/ricardo-duarte-av/olx-notifier`, tagged with the branch
+name, the commit sha, and `latest` on the default branch.
+
+The container keeps all state in `/data`, which is meant to be a bind mount from
+the host: you put `config.yaml` there, and the daemon writes `olx.db` next to it.
+Set `db_path` accordingly:
+
+```yaml
+db_path: "/data/olx.db"
+```
+
+```sh
+mkdir -p data
+cp config.example.yaml data/config.yaml   # then fill it in, set db_path: /data/olx.db
+docker run -d --name olx-notifier --restart unless-stopped \
+  -v "$PWD/data:/data" ghcr.io/ricardo-duarte-av/olx-notifier:latest
+```
+
+Or with the bundled `docker-compose.yaml`:
+
+```sh
+docker compose up -d
+docker compose logs -f
+```
+
+The image runs as uid `10001`, so the host directory must be writable by it
+(`chown -R 10001:10001 data`) — otherwise uncomment `user:` in the compose file
+and run as your own uid. `data/` is gitignored.
+
+To build the image locally:
+
+```sh
+docker build -t olx-notifier .
+```
+
 ## Matrix commands
 
 Send these in the configured room:

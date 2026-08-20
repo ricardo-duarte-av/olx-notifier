@@ -1,0 +1,13 @@
+.git
+.github
+.claude
+CLAUDE.md
+README.md
+config.yaml
+*.db
+*.db-shm
+*.db-wal
+olx-notifier
+Dockerfile
+.dockerignore
+docker-compose.yaml

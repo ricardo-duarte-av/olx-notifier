@@ -1,0 +1,14 @@
+services:
+  olx-notifier:
+    image: ghcr.io/ricardo-duarte-av/olx-notifier:latest
+    # To build locally instead of pulling, comment out `image:` and use:
+    # build: .
+    container_name: olx-notifier
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Lisbon
+    volumes:
+      # Host dir holding config.yaml (read) and olx.db (written).
+      # Must be writable by uid 10001, or set `user:` below to your own uid:gid.
+      - ./data:/data
+    # user: "1000:1000"
