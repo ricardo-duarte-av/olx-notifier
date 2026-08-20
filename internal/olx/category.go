@@ -34,7 +34,14 @@ func (c *Client) FetchCategories(ctx context.Context) ([]Category, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A document fetch, not the JSON XHR, so it gets page-shaped headers.
 	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "pt-PT,pt;q=0.9,en;q=0.8")
+
+	if err := c.pace(ctx); err != nil {
+		return nil, err
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {

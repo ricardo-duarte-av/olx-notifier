@@ -1,3 +1,7 @@
+// Live tests need the same TLS fingerprint workaround as the daemon; see the
+// //go:debug note in main.go.
+//
+//go:debug tlssha1=1
 package olx
 
 import (

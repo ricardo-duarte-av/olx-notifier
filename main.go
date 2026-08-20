@@ -1,6 +1,13 @@
 // Command olx-notifier is a long-lived daemon that watches OLX.pt searches and
 // posts new listings and price changes into a Matrix room. Searches are managed
 // at runtime with !olx commands in that room.
+//
+// Go 1.25 changed the crypto/tls default to tlssha1=0, which drops the SHA-1
+// signature algorithms from the ClientHello. That shifts the TLS fingerprint
+// enough that OLX's CloudFront WAF answers every API request with HTTP 403.
+// Restoring the pre-1.25 default keeps the handshake acceptable to it.
+//
+//go:debug tlssha1=1
 package main
 
 import (

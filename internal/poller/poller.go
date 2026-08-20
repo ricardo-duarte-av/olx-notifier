@@ -4,6 +4,7 @@ package poller
 
 import (
 	"context"
+	"errors"
 	"log"
 	"time"
 
@@ -53,6 +54,10 @@ func (p *Poller) pollAll(ctx context.Context) {
 		log.Printf("poller: list searches: %v", err)
 		return
 	}
+
+	var attempted, failed, edgeBlocked int
+	var lastBlock *olx.StatusError
+
 	for _, s := range searches {
 		if ctx.Err() != nil {
 			return
@@ -60,7 +65,40 @@ func (p *Poller) pollAll(ctx context.Context) {
 		if !s.Enabled {
 			continue
 		}
-		p.pollOne(ctx, s)
+		attempted++
+
+		if err := p.pollOne(ctx, s); err != nil {
+			failed++
+			var se *olx.StatusError
+			if errors.As(err, &se) && se.EdgeBlocked() {
+				edgeBlocked++
+				lastBlock = se
+				// Held back until the cycle ends: one summary beats one
+				// identical block message per search.
+				continue
+			}
+			log.Printf("poller: search %d (%q): %v", s.ID, s.Query, err)
+		}
+	}
+
+	p.reportBlocks(attempted, failed, edgeBlocked, lastBlock)
+}
+
+// reportBlocks summarises CloudFront blocks for one cycle. Whether every search
+// was blocked or only some is the clearest available signal for whether the
+// cause is this host (IP / TLS fingerprint) or something search-specific.
+func (p *Poller) reportBlocks(attempted, failed, edgeBlocked int, last *olx.StatusError) {
+	if edgeBlocked == 0 {
+		return
+	}
+	if edgeBlocked == attempted {
+		log.Printf("poller: ALL %d search(es) blocked by CloudFront before reaching OLX — this is host-wide, not search-specific", attempted)
+	} else {
+		log.Printf("poller: %d of %d search(es) blocked by CloudFront (%d other failure(s))", edgeBlocked, attempted, failed-edgeBlocked)
+	}
+	log.Printf("poller: block detail: %v", last)
+	if hint := last.Hint(); hint != "" {
+		log.Printf("poller: %s", hint)
 	}
 }
 
@@ -68,24 +106,34 @@ func (p *Poller) pollAll(ctx context.Context) {
 // immediately after it is added, so the first real events arrive one interval
 // later rather than after two.
 func (p *Poller) PollSearch(ctx context.Context, s store.Search) {
-	p.pollOne(ctx, s)
+	if err := p.pollOne(ctx, s); err != nil {
+		log.Printf("poller: search %d (%q): %v", s.ID, s.Query, err)
+		var se *olx.StatusError
+		if errors.As(err, &se) {
+			if hint := se.Hint(); hint != "" {
+				log.Printf("poller: %s", hint)
+			}
+		}
+	}
 }
 
-func (p *Poller) pollOne(ctx context.Context, s store.Search) {
+// pollOne polls a single search. It returns the error rather than logging it so
+// the caller can tell a host-wide block apart from a one-off failure.
+func (p *Poller) pollOne(ctx context.Context, s store.Search) error {
 	offers, err := p.client.Search(ctx, s.Params(), p.maxPages)
 	if err != nil {
-		log.Printf("poller: search %d (%q): %v", s.ID, s.Query, err)
-		return
+		return err
 	}
 
 	events, err := p.store.Reconcile(s, offers)
 	if err != nil {
 		log.Printf("poller: reconcile search %d: %v", s.ID, err)
-		return
+		return nil
 	}
 	if len(events) == 0 {
-		return
+		return nil
 	}
 	log.Printf("poller: search %d (%q): %d event(s)", s.ID, s.Query, len(events))
 	p.notifier.Notify(ctx, s, events)
+	return nil
 }
